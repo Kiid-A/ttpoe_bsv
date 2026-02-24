@@ -15,6 +15,8 @@ BSC_PATH = -p +:$(DIR_INC):$(DIR_CORE):$(DIR_DATA):$(DIR_TOP)
 TOP_MODULE = mkTb_TTPoE
 TEST_FILE  = src/test/Tb_TTPoE.bsv
 SIM_EXE    = sim_ttpoe
+BSC_BUILD  = build
+BSC_DIRS   = -bdir $(BSC_BUILD) -simdir $(BSC_BUILD)
 
 # 4. 默认目标：编译 -> 链接 -> 运行
 all: compile link run
@@ -22,12 +24,14 @@ all: compile link run
 # 编译生成中间文件
 compile:
 	@echo "=> Compiling BSV files..."
-	bsc $(BSC_PATH) -sim -g $(TOP_MODULE) -u $(TEST_FILE)
+	@mkdir -p $(BSC_BUILD)
+	bsc $(BSC_PATH) $(BSC_DIRS) -sim -g $(TOP_MODULE) -u $(TEST_FILE)
 
 # 链接生成可执行文件
 link:
 	@echo "=> Linking..."
-	bsc $(BSC_PATH) -sim -e $(TOP_MODULE) -o $(SIM_EXE)
+	@mkdir -p $(BSC_BUILD)
+	bsc $(BSC_PATH) $(BSC_DIRS) -sim -e $(TOP_MODULE) -o $(SIM_EXE)
 
 # 运行仿真
 run:
@@ -38,3 +42,4 @@ run:
 clean:
 	@echo "=> Cleaning up..."
 	rm -f *.bo *.ba *.cxx *.h *.o $(SIM_EXE)
+	rm -rf $(BSC_BUILD)

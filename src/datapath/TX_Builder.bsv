@@ -53,6 +53,8 @@ module mkTX_Builder#(TMU_Ifc tmu)(TX_Builder_Ifc);
         let cmd = cmd_q.first();
         cmd_q.deq();
 
+        $display("[TX] build cmd resp=%0d kid=0x%0h", pack(cmd.rs), cmd.kid);
+
         // 1. 无动作直接丢弃
         if (cmd.rs == RS_NONE || cmd.rs == RS_STALL || cmd.rs == RS_DROP) begin
             // 硬件什么都不发
@@ -77,8 +79,15 @@ module mkTX_Builder#(TMU_Ifc tmu)(TX_Builder_Ifc);
             pkt.ttp.rx_seq      = ctx.rx_seq_id; // 所有发出的包都会捎带最新的确认号
             pkt.ttp.reserved    = 0;
 
-            // 3. 根据具体的 Response 动作进行差异化组包
-            if (cmd.rs == RS_PAYLOAD) begin
+            // 3. 默认值 (防止未初始化导致编译失败)
+            pkt.ttp.opcode      = 6'h00;
+            pkt.ttp.payload_len = 0;
+            pkt.ttp.tx_seq      = ctx.tx_seq_id;
+
+            Bool do_send = True;
+
+            // 4. 根据具体的 Response 动作进行差异化组包
+            if (cmd.rs == RS_PAYLOAD || cmd.rs == RS_PAYLOAD2) begin
                 // 发送数据载荷：必须从主机 NOC 队列中拿数据
                 let host_data = noc_in_q.first();
                 noc_in_q.deq();
@@ -95,26 +104,44 @@ module mkTX_Builder#(TMU_Ifc tmu)(TX_Builder_Ifc);
             end
             else if (cmd.rs == RS_OPEN) begin
                 // 发送建链请求 (控制包)
-                pkt.ttp.opcode      = 6'h00; // TTP_OPEN
-                pkt.ttp.payload_len = 0;
-                pkt.ttp.tx_seq      = ctx.tx_seq_id; // OPEN 不自增序号
+                pkt.ttp.opcode = 6'h00; // TTP_OPEN
             end
-            else if (cmd.rs == RS_ACK) begin
-                // 发送纯确认包
-                pkt.ttp.opcode      = 6'h07; // TTP_ACK
-                pkt.ttp.payload_len = 0;
-                pkt.ttp.tx_seq      = ctx.tx_seq_id; 
+            else if (cmd.rs == RS_OPEN_ACK) begin
+                pkt.ttp.opcode = 6'h01; // TTP_OPEN_ACK
+            end
+            else if (cmd.rs == RS_OPEN_NACK) begin
+                pkt.ttp.opcode = 6'h02; // TTP_OPEN_NACK
             end
             else if (cmd.rs == RS_CLOSE) begin
                 // 发送断链请求
-                pkt.ttp.opcode      = 6'h03; // TTP_CLOSE
-                pkt.ttp.payload_len = 0;
-                pkt.ttp.tx_seq      = ctx.tx_seq_id;
+                pkt.ttp.opcode = 6'h03; // TTP_CLOSE
             end
-            // ... (此处省略 RS_NACK, RS_OPEN_ACK 等其余分支的组包) ...
+            else if (cmd.rs == RS_CLOSE_ACK) begin
+                pkt.ttp.opcode = 6'h04; // TTP_CLOSE_ACK
+            end
+            else if (cmd.rs == RS_CLOSE_XACK) begin
+                pkt.ttp.opcode = 6'h05; // TTP_CLOSE_XACK
+            end
+            else if (cmd.rs == RS_ACK) begin
+                // 发送纯确认包
+                pkt.ttp.opcode = 6'h07; // TTP_ACK
+            end
+            else if (cmd.rs == RS_NACK) begin
+                pkt.ttp.opcode = 6'h08; // TTP_NACK
+            end
+            else if (cmd.rs == RS_NACK_NOLINK) begin
+                pkt.ttp.opcode = 6'h09; // TTP_NACK_NOLINK
+            end
+            else begin
+                // 例如 RS_REPLAY_DATA / RS_NOC_FAIL / RS_NOC_END 等，不发网包
+                do_send = False;
+            end
             
-            // 4. 将组装好的完美以太网帧打入物理网卡发送 FIFO
-            mac_out_q.enq(pkt);
+            // 5. 将组装好的以太网帧打入物理网卡发送 FIFO
+            if (do_send) begin
+                $display("[TX] send opcode=%0h vci=%0d tx_seq=%0d rx_seq=%0d", pkt.ttp.opcode, pkt.ttp.vci, pkt.ttp.tx_seq, pkt.ttp.rx_seq);
+                mac_out_q.enq(pkt);
+            end
         end
     endrule
 

@@ -17,6 +17,7 @@ interface EventArbiter_Ifc;
 
     // --- 消费者接口 (Consumer) ---
     // 供 FSM/顶层流水线单步弹出，绝对不会发生多源冲突
+    method Bool has_event();
     method ActionValue#(EventReq) deq_event();
 endinterface
 
@@ -30,44 +31,6 @@ module mkEventArbiter(EventArbiter_Ifc);
     FIFOF#(EventReq) ak_q <- mkFIFOF; // 内部确认事件
     FIFOF#(EventReq) in_q <- mkFIFOF; // 定时与资源管理事件
 
-    // 输出汇聚 FIFO (缓冲仲裁结果给 FSM)
-    FIFOF#(EventReq) out_q <- mkFIFOF;
-
-    // 轮询令牌寄存器 (Token): 0=RX, 1=TX, 2=AK, 3=IN
-    Reg#(Bit#(2)) turn <- mkReg(0);
-
-    // =====================================================================
-    // 核心 Rule: Round-Robin 硬件调度算法
-    // 触发条件：只要任意一个输入队列有数据，且输出队列未满，该规则就会在时钟上升沿发射
-    // =====================================================================
-    rule rl_arbitrate (rx_q.notEmpty || tx_q.notEmpty || ak_q.notEmpty || in_q.notEmpty);
-        
-        // 硬件组合逻辑实现：严格轮询，防止饿死
-        if (turn == 0) begin
-            if      (rx_q.notEmpty) begin out_q.enq(rx_q.first); rx_q.deq; turn <= 1; end
-            else if (tx_q.notEmpty) begin out_q.enq(tx_q.first); tx_q.deq; turn <= 2; end
-            else if (ak_q.notEmpty) begin out_q.enq(ak_q.first); ak_q.deq; turn <= 3; end
-            else if (in_q.notEmpty) begin out_q.enq(in_q.first); in_q.deq; turn <= 0; end
-        end
-        else if (turn == 1) begin
-            if      (tx_q.notEmpty) begin out_q.enq(tx_q.first); tx_q.deq; turn <= 2; end
-            else if (ak_q.notEmpty) begin out_q.enq(ak_q.first); ak_q.deq; turn <= 3; end
-            else if (in_q.notEmpty) begin out_q.enq(in_q.first); in_q.deq; turn <= 0; end
-            else if (rx_q.notEmpty) begin out_q.enq(rx_q.first); rx_q.deq; turn <= 1; end
-        end
-        else if (turn == 2) begin
-            if      (ak_q.notEmpty) begin out_q.enq(ak_q.first); ak_q.deq; turn <= 3; end
-            else if (in_q.notEmpty) begin out_q.enq(in_q.first); in_q.deq; turn <= 0; end
-            else if (rx_q.notEmpty) begin out_q.enq(rx_q.first); rx_q.deq; turn <= 1; end
-            else if (tx_q.notEmpty) begin out_q.enq(tx_q.first); tx_q.deq; turn <= 2; end
-        end
-        else begin // turn == 3
-            if      (in_q.notEmpty) begin out_q.enq(in_q.first); in_q.deq; turn <= 0; end
-            else if (rx_q.notEmpty) begin out_q.enq(rx_q.first); rx_q.deq; turn <= 1; end
-            else if (tx_q.notEmpty) begin out_q.enq(tx_q.first); tx_q.deq; turn <= 2; end
-            else if (ak_q.notEmpty) begin out_q.enq(ak_q.first); ak_q.deq; turn <= 3; end
-        end
-    endrule
 
     // =====================================================================
     // 接口方法连线
@@ -77,6 +40,7 @@ module mkEventArbiter(EventArbiter_Ifc);
     endmethod
 
     method Action enq_tx_event(EventReq req);
+        $display("[ARB] enq TX kid=0x%0h evt=%0d", req.kid, pack(req.event_type));
         tx_q.enq(req);
     endmethod
 
@@ -88,11 +52,37 @@ module mkEventArbiter(EventArbiter_Ifc);
         in_q.enq(req);
     endmethod
 
-    // 弹出被仲裁器选中的事件
-    method ActionValue#(EventReq) deq_event();
-        let req = out_q.first;
-        out_q.deq;
-        return req;
+    method Bool has_event();
+        return (tx_q.notEmpty || rx_q.notEmpty || ak_q.notEmpty || in_q.notEmpty);
+    endmethod
+
+    // 弹出被仲裁器选中的事件 (TX 优先)
+    method ActionValue#(EventReq) deq_event()
+        if (tx_q.notEmpty || rx_q.notEmpty || ak_q.notEmpty || in_q.notEmpty);
+        if (tx_q.notEmpty) begin
+            let req = tx_q.first;
+            tx_q.deq;
+            $display("[ARB] deq TX kid=0x%0h evt=%0d", req.kid, pack(req.event_type));
+            return req;
+        end
+        else if (rx_q.notEmpty) begin
+            let req = rx_q.first;
+            rx_q.deq;
+            $display("[ARB] deq RX kid=0x%0h evt=%0d", req.kid, pack(req.event_type));
+            return req;
+        end
+        else if (ak_q.notEmpty) begin
+            let req = ak_q.first;
+            ak_q.deq;
+            $display("[ARB] deq AK kid=0x%0h evt=%0d", req.kid, pack(req.event_type));
+            return req;
+        end
+        else begin
+            let req = in_q.first;
+            in_q.deq;
+            $display("[ARB] deq IN kid=0x%0h evt=%0d", req.kid, pack(req.event_type));
+            return req;
+        end
     endmethod
 
 endmodule

@@ -47,14 +47,24 @@ module mkTTPoE_Top(TTPoE_Top_Ifc);
         arbiter.enq_in_event(req);
     endrule
 
+
     // 3. 核心心脏脉动 (Main FSM Pipeline)
-    rule rl_main_fsm_pipeline;
+    rule rl_main_fsm_pipeline (arbiter.has_event);
         EventReq req <- arbiter.deq_event();
-        TagContext ctx <- tmu.read_context(req.kid);
+        TagContext ctx = tmu.read_context(req.kid);
         FSM_Output out = fsm_lookup(ctx.state, req.event_type);
+
+        $display("[FSM] kid=0x%0h evt=%0d curr=%0d next=%0d resp=%0d", req.kid, pack(req.event_type), pack(ctx.state), pack(out.next_state), pack(out.response));
 
         if (out.next_state != ST_STAY && out.next_state != ctx.state) begin
             ctx.state = out.next_state;
+            ctx.kid   = req.kid;
+            if (out.next_state == ST_CLOSED) begin
+                ctx.valid = False;
+            end
+            else begin
+                ctx.valid = True;
+            end
             tmu.write_context(req.kid, ctx);
 
             // 【修正点】：将 ctx.way_idx 精准传给定时器，防止错杀覆盖
@@ -67,6 +77,7 @@ module mkTTPoE_Top(TTPoE_Top_Ifc);
         end
 
         if (out.response != RS_NONE && out.response != RS_ILLEGAL && out.response != RS_STALL) begin
+            $display("[FSM] generate_ctrl_pkt resp=%0d kid=0x%0h", pack(out.response), req.kid);
             tx_builder.generate_ctrl_pkt(req.kid, out.response);
         end
     endrule
@@ -78,6 +89,7 @@ module mkTTPoE_Top(TTPoE_Top_Ifc);
     interface noc_tx_in  = tx_builder.noc_tx_in;
     
     method Action host_ctrl_request(EventReq req);
+        $display("[TOP] host_ctrl_request kid=0x%0h evt=%0d", req.kid, pack(req.event_type));
         arbiter.enq_tx_event(req);
     endmethod
 
