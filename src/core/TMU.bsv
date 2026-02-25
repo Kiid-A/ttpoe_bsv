@@ -39,9 +39,9 @@ module mkTMU(TMU_Ifc);
     RegFile#(Bit#(8), TagContext) bank0 <- mkRegFileFull();
     RegFile#(Bit#(8), TagContext) bank1 <- mkRegFileFull();
 
-    // 简单的硬件 Hash 函数：截取 KID 的低 8 位作为 SRAM 寻址索引
+    // 简单的硬件 Hash 函数：取 KID 的高 8 位 (MAC LSB 的高字节) 作为索引
     function Bit#(8) hash_kid(Bit#(64) kid);
-        return truncate(kid); 
+        return truncate(kid >> 56);
     endfunction
 
     // ---------------------------------------------------------------------

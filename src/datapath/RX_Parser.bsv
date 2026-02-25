@@ -33,6 +33,16 @@ module mkRX_Parser#(TMU_Ifc tmu)(RX_Parser_Ifc);
     FIFOF#(EventReq)      rx_event_q   <- mkFIFOF;
     FIFOF#(Raw_MAC_Frame) noc_out_q    <- mkFIFOF;
 
+    Reg#(UInt#(16)) dbg_cycle <- mkReg(0);
+
+    rule rl_dbg_queues;
+        dbg_cycle <= dbg_cycle + 1;
+        if ((dbg_cycle % 5) == 0) begin
+            $display("[RX][DBG] mac_in=%0d rx_evt=%0d noc_out=%0d",
+                     pack(mac_in_q.notEmpty), pack(rx_event_q.notEmpty), pack(noc_out_q.notEmpty));
+        end
+    endrule
+
     // =====================================================================
     // 辅助函数：将报文中的 MAC 和 VC 拼装成 64-bit 主键 KID
     // =====================================================================
@@ -75,6 +85,9 @@ module mkRX_Parser#(TMU_Ifc tmu)(RX_Parser_Ifc);
         Bit#(64)    kid = generate_kid(frame.eth.src_mac, frame.ttp.vci);
         TTPoE_Event evt = map_opcode_to_event(frame.ttp.opcode);
 
+        $display("[RX] parse opcode=0x%0h evt=%0d kid=0x%0h has_payload=%0d len=%0d",
+                 frame.ttp.opcode, pack(evt), kid, pack(frame.has_payload), frame.ttp.payload_len);
+
         // 2. 动静分离逻辑判定
         if (evt == EV_RXQ_TTP_PAYLOAD) begin
             // -------------------------------------------------------------
@@ -86,17 +99,20 @@ module mkRX_Parser#(TMU_Ifc tmu)(RX_Parser_Ifc);
             if (is_valid_seq) begin
                 // 完美！包合法。直接扔给 DMA/NOC，完全不打扰 FSM
                 noc_out_q.enq(frame);
+                $display("[RX] fast-path to NOC kid=0x%0h", kid);
                 
                 // 叫 TMU 把 rx_seq_id + 1
                 tmu.update_rx_seq(kid);
                 
                 // 依然需要生成一个事件告诉 FSM：“我收到了合法数据，请安排发 ACK”
                 rx_event_q.enq(EventReq { kid: kid, event_type: EV_RXQ_TTP_PAYLOAD });
+                $display("[RX] enq RX event PAYLOAD kid=0x%0h", kid);
             end
             else begin
                 // 序列号不对 (可能是乱序或重传旧包)
                 // 生成 NACK 事件交给 FSM 去走慢车道报错流程
                 rx_event_q.enq(EventReq { kid: kid, event_type: EV_RXQ_TTP_NACK });
+                $display("[RX] enq RX event NACK kid=0x%0h", kid);
             end
         end
         else begin
@@ -105,6 +121,7 @@ module mkRX_Parser#(TMU_Ifc tmu)(RX_Parser_Ifc);
             // -------------------------------------------------------------
             // 控制流不需要快车道，直接打包成事件，丢给 Arbiter
             rx_event_q.enq(EventReq { kid: kid, event_type: evt });
+            $display("[RX] enq RX event ctrl evt=%0d kid=0x%0h", pack(evt), kid);
         end
     endrule
 

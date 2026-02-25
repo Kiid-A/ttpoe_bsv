@@ -77,6 +77,10 @@ function FSM_Output fsm_lookup(TTPoE_State curr_state, TTPoE_Event event_type);
             out.response   = RS_CLOSE_XACK;
             out.next_state = ST_CLOSE_RECD;  // 准备排空队列
         end
+        {ST_CLOSE_SENT, EV_RXQ_TTP_CLOSE}: begin
+            out.response   = RS_CLOSE_XACK;
+            out.next_state = ST_CLOSE_RECD;  // 交错断链，进入排空阶段
+        end
         {ST_CLOSE_SENT, EV_RXQ_TTP_CLOSE_ACK}: begin
             out.response   = RS_NOC_END;
             out.next_state = ST_CLOSED;      // 挥手完成
@@ -91,6 +95,10 @@ function FSM_Output fsm_lookup(TTPoE_State curr_state, TTPoE_Event event_type);
         end
         {ST_OPEN_RECD, EV_INQ_NO_TAG}: begin
             out.response   = RS_OPEN_NACK; // TMU资源满载，拒绝连接
+            out.next_state = ST_CLOSED;
+        end
+        {ST_CLOSED, EV_INQ_NO_TAG}: begin
+            out.response   = RS_OPEN_NACK; // 防止乱序时丢失 OPEN_NACK
             out.next_state = ST_CLOSED;
         end
         {ST_OPEN_SENT, EV_INQ_TIMEOUT}: begin

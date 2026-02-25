@@ -31,11 +31,34 @@ module mkEventArbiter(EventArbiter_Ifc);
     FIFOF#(EventReq) ak_q <- mkFIFOF; // 内部确认事件
     FIFOF#(EventReq) in_q <- mkFIFOF; // 定时与资源管理事件
 
+    Reg#(Bool) dbg_tx_seen  <- mkReg(False);
+    Reg#(Bool) dbg_state    <- mkReg(False);
+    Reg#(UInt#(16)) dbg_cycle <- mkReg(0);
+
+    rule rl_dbg_state (!dbg_state);
+        dbg_state <= True;
+        $display("[ARB] rx_q.notEmpty=%0d tx_q.notEmpty=%0d ak_q.notEmpty=%0d in_q.notEmpty=%0d",
+                 pack(rx_q.notEmpty), pack(tx_q.notEmpty), pack(ak_q.notEmpty), pack(in_q.notEmpty));
+    endrule
+
+    rule rl_dbg_tx (tx_q.notEmpty && !dbg_tx_seen);
+        dbg_tx_seen <= True;
+        $display("[ARB] tx_q.notEmpty=1");
+    endrule
+
+    rule rl_dbg_queues;
+        dbg_cycle <= dbg_cycle + 1;
+        if ((dbg_cycle % 5) == 0) begin
+            $display("[ARB][DBG] rx=%0d tx=%0d ak=%0d in=%0d",
+                     pack(rx_q.notEmpty), pack(tx_q.notEmpty), pack(ak_q.notEmpty), pack(in_q.notEmpty));
+        end
+    endrule
 
     // =====================================================================
     // 接口方法连线
     // =====================================================================
     method Action enq_rx_event(EventReq req);
+        $display("[ARB] enq RX kid=0x%0h evt=%0d", req.kid, pack(req.event_type));
         rx_q.enq(req);
     endmethod
 
@@ -45,10 +68,12 @@ module mkEventArbiter(EventArbiter_Ifc);
     endmethod
 
     method Action enq_ak_event(EventReq req);
+        $display("[ARB] enq AK kid=0x%0h evt=%0d", req.kid, pack(req.event_type));
         ak_q.enq(req);
     endmethod
 
     method Action enq_in_event(EventReq req);
+        $display("[ARB] enq IN kid=0x%0h evt=%0d", req.kid, pack(req.event_type));
         in_q.enq(req);
     endmethod
 
@@ -57,32 +82,25 @@ module mkEventArbiter(EventArbiter_Ifc);
     endmethod
 
     // 弹出被仲裁器选中的事件 (TX 优先)
-    method ActionValue#(EventReq) deq_event()
-        if (tx_q.notEmpty || rx_q.notEmpty || ak_q.notEmpty || in_q.notEmpty);
+    method ActionValue#(EventReq) deq_event() if (tx_q.notEmpty || rx_q.notEmpty || ak_q.notEmpty || in_q.notEmpty);
+        EventReq req = ?;
         if (tx_q.notEmpty) begin
-            let req = tx_q.first;
-            tx_q.deq;
+            req = tx_q.first; tx_q.deq;
             $display("[ARB] deq TX kid=0x%0h evt=%0d", req.kid, pack(req.event_type));
-            return req;
         end
         else if (rx_q.notEmpty) begin
-            let req = rx_q.first;
-            rx_q.deq;
+            req = rx_q.first; rx_q.deq;
             $display("[ARB] deq RX kid=0x%0h evt=%0d", req.kid, pack(req.event_type));
-            return req;
         end
         else if (ak_q.notEmpty) begin
-            let req = ak_q.first;
-            ak_q.deq;
+            req = ak_q.first; ak_q.deq;
             $display("[ARB] deq AK kid=0x%0h evt=%0d", req.kid, pack(req.event_type));
-            return req;
         end
         else begin
-            let req = in_q.first;
-            in_q.deq;
+            req = in_q.first; in_q.deq;
             $display("[ARB] deq IN kid=0x%0h evt=%0d", req.kid, pack(req.event_type));
-            return req;
         end
+        return req;
     endmethod
 
 endmodule
